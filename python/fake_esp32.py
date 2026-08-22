@@ -77,13 +77,28 @@ def run_intrusion_scenario(client):
     print("[fake_esp32] Scenario complete. Expect THREAT-level response from Python.")
 
 
+def run_humidity_scenario(client):
+    """One high-humidity reading, then a return to normal, to exercise
+    the environmental automation OPEN_WINDOW/CLOSE_WINDOW rule."""
+    print("[fake_esp32] Running humidity scenario in 3s...")
+    time.sleep(3)
+
+    publish(client, TOPIC_ESP32_2_STATUS, {"humidity": 82.0, "temperature": 23.0})
+    print("[fake_esp32] High humidity sent. Expect OPEN_WINDOW if mode=HOME.")
+    time.sleep(4)
+
+    publish(client, TOPIC_ESP32_2_STATUS, {"humidity": 55.0, "temperature": 22.5})
+    print("[fake_esp32] Humidity back to normal. Expect CLOSE_WINDOW if window was OPEN.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--scenario",
-        choices=["idle", "intrusion"],
+        choices=["idle", "intrusion", "humidity"],
         default="idle",
-        help="idle = steady background stream; intrusion = one scripted THREAT sequence",
+        help="idle = steady background stream; intrusion = one scripted THREAT sequence; "
+             "humidity = one high-humidity reading then a return to normal",
     )
     args = parser.parse_args()
 
@@ -97,6 +112,9 @@ def main():
     try:
         if args.scenario == "intrusion":
             run_intrusion_scenario(client)
+            time.sleep(2)
+        elif args.scenario == "humidity":
+            run_humidity_scenario(client)
             time.sleep(2)
         else:
             run_idle_loop(client)

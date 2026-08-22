@@ -12,6 +12,7 @@ Run:
 import logging
 import time
 
+from environment import EnvironmentalController
 from logger import EventLogger
 from mqtt_client import SentinelMQTTClient
 from state import SystemState
@@ -27,19 +28,23 @@ logger = logging.getLogger("sentinelx.main")
 state = SystemState()
 event_logger = EventLogger()
 
-# For tonight's manual testing: start ARMED so the intrusion scenario
-# actually exercises the THREAT path. Real arm/disarm control lands
-# on the dashboard in Phase 5.
+# For tonight's manual testing: start ARMED + HOME so both the threat path
+# and the environmental automation path are exercisable. Real mode/arming
+# control lands on the dashboard in Phase 5.
 state.system_state = "ARMED"
+state.mode = "HOME"
 
 mqtt_client: SentinelMQTTClient  # assigned in main(), referenced by on_message
 threat_analyzer: ThreatAnalyzer
+environmental_controller: EnvironmentalController
 
 
 def on_message(topic: str, payload: dict):
     if topic == TOPIC_ESP32_2_STATUS:
         state.update_from_esp32_2(payload)
         logger.info("esp32_2 status update: %s", payload)
+        if "humidity" in payload:
+            environmental_controller.evaluate()
     elif topic == TOPIC_ESP32_1_STATUS:
         state.update_from_esp32_1(payload)
         logger.info("esp32_1 status update: %s", payload)
@@ -56,13 +61,14 @@ def on_connect_change(connected: bool):
 
 
 def main():
-    global mqtt_client, threat_analyzer
+    global mqtt_client, threat_analyzer, environmental_controller
 
     mqtt_client = SentinelMQTTClient(
         on_message=on_message,
         on_connect_change=on_connect_change,
     )
     threat_analyzer = ThreatAnalyzer(state, mqtt_client, event_logger)
+    environmental_controller = EnvironmentalController(state, mqtt_client)
 
     mqtt_client.connect()
 

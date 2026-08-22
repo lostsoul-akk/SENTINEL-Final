@@ -8,6 +8,7 @@ Tested and working against a local Mosquitto broker.
 - `state.py` — `SystemState`, the shared object the rest of the app reads/writes
 - `logger.py` — `EventLogger`, appends JSON-lines events to `data/events.jsonl`
 - `threat.py` — `ThreatAnalyzer`, SAFE/WARNING/THREAT correlation logic (docs Section 10)
+- `environment.py` — `EnvironmentalController`, humidity/Home-mode auto-window rule (docs Section 8)
 - `fake_esp32.py` — stand-in for both real ESP32 boards, so you can build everything before hardware exists
 - `main.py` — entry point tying it all together
 
@@ -50,6 +51,13 @@ python fake_esp32.py --scenario intrusion
 This fires PIR -> sound -> failed RFID in sequence, matching Section 7 of
 the Revision 2 documentation. Watch the threat level escalate SAFE -> WARNING -> THREAT.
 
+To test environmental automation:
+```bash
+python fake_esp32.py --scenario humidity
+```
+Sends one high-humidity reading then a return to normal. With `mode=HOME`,
+watch the window state flip OPEN then back to CLOSED.
+
 ## What's confirmed working
 - Broker connect/subscribe/reconnect handling
 - JSON parsing with malformed-payload protection
@@ -65,11 +73,17 @@ the Revision 2 documentation. Watch the threat level escalate SAFE -> WARNING ->
   the window (`ThreatAnalyzer.decay_check()`, polled every 2s from `main.py`).
 - **Event logging:** every sensor event, threat-level change, and command
   sent gets appended to `data/events.jsonl` (JSON-lines, one entry per line).
-- Note: `main.py` currently hardcodes `state.system_state = "ARMED"` for
-  testing — real arm/disarm control lands on the dashboard in Phase 5.
+- **Environmental automation (Section 8):** `humidity > 70%` AND `mode == HOME`
+  → `OPEN_WINDOW`; humidity dropping back below `threshold - 5%` → `CLOSE_WINDOW`
+  (hysteresis avoids rapid toggling at the threshold). `mode == AWAY` never
+  auto-opens regardless of humidity — verified with a direct unit test.
+  Runs independently of the security/threat flow, triggered only by DHT11
+  humidity readings on `esp32_2/status`.
+- Note: `main.py` currently hardcodes `state.system_state = "ARMED"` and
+  `state.mode = "HOME"` for testing — real arm/disarm and mode control
+  lands on the dashboard in Phase 5.
 
-## Next (Phase 4 onward)
-- Environmental automation rule (humidity + Home mode -> OPEN_WINDOW)
+## Next (Phase 5 onward)
 - CustomTkinter dashboard wired to `SystemState` + `EventLogger.read_recent()`
 - Camera + face recognition module
 - Attach latest webcam capture to THREAT-level alerts (see TODO in `threat.py`)
