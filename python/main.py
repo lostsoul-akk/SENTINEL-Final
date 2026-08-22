@@ -1,14 +1,13 @@
 """
-Sentinel X — Phase 1 entry point / smoke test
-
-Tonight's goal: prove the MQTT client connects, subscribes, receives
-JSON from fake_esp32.py, and updates SystemState correctly.
+Sentinel X — entry point (Phase 5: dashboard)
 
 Run:
     Terminal 1: python fake_esp32.py
-    Terminal 2: python main.py
+    Terminal 2: python main.py            # launches the dashboard
+    Terminal 2: python main.py --headless # old Phase 1-4 console-only mode
 """
 
+import argparse
 import logging
 import time
 
@@ -63,6 +62,14 @@ def on_connect_change(connected: bool):
 def main():
     global mqtt_client, threat_analyzer, environmental_controller
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without the CustomTkinter dashboard (console-only, Phase 1-4 style)",
+    )
+    args = parser.parse_args()
+
     mqtt_client = SentinelMQTTClient(
         on_message=on_message,
         on_connect_change=on_connect_change,
@@ -72,6 +79,13 @@ def main():
 
     mqtt_client.connect()
 
+    if args.headless:
+        _run_headless()
+    else:
+        _run_dashboard()
+
+
+def _run_headless():
     logger.info("Listening for MQTT traffic (system_state=%s). Ctrl+C to stop.", state.system_state)
     try:
         elapsed = 0
@@ -83,6 +97,16 @@ def main():
                 logger.info("Current state snapshot: %s", state.snapshot())
     except KeyboardInterrupt:
         pass
+    finally:
+        mqtt_client.disconnect()
+
+
+def _run_dashboard():
+    from dashboard import SentinelDashboard  # deferred: keeps --headless free of the ctk dependency at import time
+
+    app = SentinelDashboard(state, mqtt_client, event_logger, threat_analyzer, environmental_controller)
+    try:
+        app.mainloop()
     finally:
         mqtt_client.disconnect()
 
