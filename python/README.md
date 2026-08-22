@@ -1,13 +1,15 @@
-# Sentinel X — Person 2 PC-Side Code (Phase 0 + Phase 1)
+# Sentinel X — Person 2 PC-Side Code
 
-Tested and working tonight against a local Mosquitto broker.
+Tested and working against a local Mosquitto broker.
 
 ## Files
 - `topics.py` — single source of truth for MQTT topic names/contract
 - `mqtt_client.py` — `SentinelMQTTClient`, runs on its own thread, connects/subscribes/publishes
 - `state.py` — `SystemState`, the shared object the rest of the app reads/writes
+- `logger.py` — `EventLogger`, appends JSON-lines events to `data/events.jsonl`
+- `threat.py` — `ThreatAnalyzer`, SAFE/WARNING/THREAT correlation logic (docs Section 10)
 - `fake_esp32.py` — stand-in for both real ESP32 boards, so you can build everything before hardware exists
-- `main.py` — Phase 1 smoke test tying it all together
+- `main.py` — entry point tying it all together
 
 ## Setup
 
@@ -46,18 +48,28 @@ To test the scripted "unauthorized approach" sequence from the docs instead:
 python fake_esp32.py --scenario intrusion
 ```
 This fires PIR -> sound -> failed RFID in sequence, matching Section 7 of
-the Revision 2 documentation. `main.py` should log all three events.
+the Revision 2 documentation. Watch the threat level escalate SAFE -> WARNING -> THREAT.
 
 ## What's confirmed working
 - Broker connect/subscribe/reconnect handling
 - JSON parsing with malformed-payload protection
 - `SystemState` updates from both esp32_1 and esp32_2 status topics
-- Event topic logging
 - Command publish helpers (`publish_command_esp32_1/2`, `publish_system_status`)
+- **Threat analysis (Section 10):** single ambiguous signal → WARNING;
+  2+ distinct sensor signals within an 8s correlation window → THREAT;
+  THREAT triggers `LOCK_DOOR` / `CLOSE_WINDOW` / `SOUND_ALARM` commands
+  and updates `door`/`window` state. Verified against `fake_esp32.py --scenario intrusion`
+  (PIR alone → WARNING, PIR + sound → THREAT) and against the idle stream
+  (routine traffic stays SAFE, no false escalation).
+- Threat level decays back toward SAFE once no new signals arrive within
+  the window (`ThreatAnalyzer.decay_check()`, polled every 2s from `main.py`).
+- **Event logging:** every sensor event, threat-level change, and command
+  sent gets appended to `data/events.jsonl` (JSON-lines, one entry per line).
+- Note: `main.py` currently hardcodes `state.system_state = "ARMED"` for
+  testing — real arm/disarm control lands on the dashboard in Phase 5.
 
-## Next (Phase 2 onward)
-- Flesh out threat analysis rules in a new `threat.py` (SAFE/WARNING/THREAT per Section 10)
-- Event logger to JSON-lines/SQLite
+## Next (Phase 4 onward)
 - Environmental automation rule (humidity + Home mode -> OPEN_WINDOW)
-- CustomTkinter dashboard wired to `SystemState`
+- CustomTkinter dashboard wired to `SystemState` + `EventLogger.read_recent()`
 - Camera + face recognition module
+- Attach latest webcam capture to THREAT-level alerts (see TODO in `threat.py`)

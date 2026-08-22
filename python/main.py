@@ -12,8 +12,10 @@ Run:
 import logging
 import time
 
+from logger import EventLogger
 from mqtt_client import SentinelMQTTClient
 from state import SystemState
+from threat import ThreatAnalyzer
 from topics import TOPIC_ESP32_1_STATUS, TOPIC_ESP32_2_STATUS, TOPIC_EVENT
 
 logging.basicConfig(
@@ -23,6 +25,15 @@ logging.basicConfig(
 logger = logging.getLogger("sentinelx.main")
 
 state = SystemState()
+event_logger = EventLogger()
+
+# For tonight's manual testing: start ARMED so the intrusion scenario
+# actually exercises the THREAT path. Real arm/disarm control lands
+# on the dashboard in Phase 5.
+state.system_state = "ARMED"
+
+mqtt_client: SentinelMQTTClient  # assigned in main(), referenced by on_message
+threat_analyzer: ThreatAnalyzer
 
 
 def on_message(topic: str, payload: dict):
@@ -34,7 +45,7 @@ def on_message(topic: str, payload: dict):
         logger.info("esp32_1 status update: %s", payload)
     elif topic == TOPIC_EVENT:
         logger.warning("EVENT: %s", payload)
-        # Phase 3 will route this into threat analysis; tonight we just log it.
+        threat_analyzer.handle_event(payload)
     else:
         logger.debug("Unhandled topic %s: %s", topic, payload)
 
@@ -45,21 +56,29 @@ def on_connect_change(connected: bool):
 
 
 def main():
-    client = SentinelMQTTClient(
+    global mqtt_client, threat_analyzer
+
+    mqtt_client = SentinelMQTTClient(
         on_message=on_message,
         on_connect_change=on_connect_change,
     )
-    client.connect()
+    threat_analyzer = ThreatAnalyzer(state, mqtt_client, event_logger)
 
-    logger.info("Listening for MQTT traffic. Ctrl+C to stop.")
+    mqtt_client.connect()
+
+    logger.info("Listening for MQTT traffic (system_state=%s). Ctrl+C to stop.", state.system_state)
     try:
+        elapsed = 0
         while True:
-            time.sleep(10)
-            logger.info("Current state snapshot: %s", state.snapshot())
+            time.sleep(2)
+            elapsed += 2
+            threat_analyzer.decay_check()
+            if elapsed % 10 == 0:
+                logger.info("Current state snapshot: %s", state.snapshot())
     except KeyboardInterrupt:
         pass
     finally:
-        client.disconnect()
+        mqtt_client.disconnect()
 
 
 if __name__ == "__main__":
