@@ -1,0 +1,5 @@
+paho-mqtt>=2.0.0
+customtkinter
+opencv-python
+face_recognition
+pillow
