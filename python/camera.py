@@ -406,4 +406,8 @@ webcam.release()
 
 cv2.destroyAllWindows()
 
+<<<<<<< HEAD
 print("\nSENTINEL X FACIAL RECOGNITION STOPPED")
+=======
+print("\nSENTINEL X FACIAL RECOGNITION STOPPED")
+>>>>>>> upstream/main
