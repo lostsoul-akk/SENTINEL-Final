@@ -14,8 +14,10 @@ arming-state management" is owned by Python / the dashboard).
 """
 
 import logging
+from typing import Optional
 
 import customtkinter as ctk
+from PIL import Image
 
 from environment import EnvironmentalController
 from logger import EventLogger
@@ -46,6 +48,8 @@ class SentinelDashboard(ctk.CTk):
         event_logger: EventLogger,
         threat_analyzer: ThreatAnalyzer,
         environmental_controller: EnvironmentalController,
+        video_stream=None,
+        auth_engine=None,
     ):
         super().__init__()
 
@@ -54,9 +58,12 @@ class SentinelDashboard(ctk.CTk):
         self._events = event_logger
         self._threat = threat_analyzer
         self._environment = environmental_controller
+        self._video = video_stream
+        self._auth = auth_engine
+        self._last_shown_auth_ts = None
 
         self.title("Sentinel X — Dashboard")
-        self.geometry("900x600")
+        self.geometry("900x680")
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -64,6 +71,7 @@ class SentinelDashboard(ctk.CTk):
         self._build_status_panel()
         self._build_sensor_panel()
         self._build_controls_panel()
+        self._build_face_auth_panel()
         self._build_event_log_panel()
 
         self.after(REFRESH_MS, self._tick)
@@ -135,13 +143,48 @@ class SentinelDashboard(ctk.CTk):
         self.btn_unlock = ctk.CTkButton(frame, text="Unlock Door", command=self._unlock_door)
         self.btn_unlock.pack(fill="x", padx=10, pady=4)
 
+    def _build_face_auth_panel(self):
+        frame = ctk.CTkFrame(self)
+        frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=6)
+        frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(frame, text="Face Auth + Keypad", font=("", 16, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4)
+        )
+
+        self.auth_thumbnail_label = ctk.CTkLabel(frame, text="No captures yet", width=160, height=120)
+        self.auth_thumbnail_label.grid(row=1, column=0, padx=10, pady=(0, 10))
+
+        self.auth_status_label = ctk.CTkLabel(
+            frame, text="Continuous surveillance running...", anchor="w", justify="left", wraplength=600,
+        )
+        self.auth_status_label.grid(row=1, column=1, sticky="nw", padx=10, pady=(0, 10))
+
+        pin_row = ctk.CTkFrame(frame, fg_color="transparent")
+        pin_row.grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+        ctk.CTkLabel(pin_row, text="Manual PIN entry (demo/backup):").pack(side="left", padx=(0, 8))
+        self.pin_entry = ctk.CTkEntry(pin_row, width=100, show="*")
+        self.pin_entry.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(pin_row, text="Submit", width=80, command=self._submit_pin).pack(side="left")
+        self.pin_entry.bind("<Return>", lambda event: self._submit_pin())
+
+    def _submit_pin(self):
+        pin = self.pin_entry.get().strip()
+        self.pin_entry.delete(0, "end")
+        if not pin:
+            return
+        if self._auth is not None:
+            self._auth.on_keypad_pin_entered(pin)
+        else:
+            logger.warning("PIN submitted but auth engine isn't available")
+
     def _build_event_log_panel(self):
         frame = ctk.CTkFrame(self)
-        frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(6, 12))
-        self.grid_rowconfigure(2, weight=1)
+        frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=12, pady=(6, 12))
+        self.grid_rowconfigure(3, weight=1)
         ctk.CTkLabel(frame, text="Event History", font=("", 16, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
 
-        self.event_box = ctk.CTkTextbox(frame, height=180)
+        self.event_box = ctk.CTkTextbox(frame, height=150)
         self.event_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.event_box.configure(state="disabled")
 
@@ -181,6 +224,7 @@ class SentinelDashboard(ctk.CTk):
         snapshot = self._state.snapshot()
         self._render(snapshot)
         self._threat.decay_check()
+        self._refresh_face_auth_panel()
         self.after(REFRESH_MS, self._tick)
 
     def _render(self, snapshot: dict):
@@ -215,3 +259,41 @@ class SentinelDashboard(ctk.CTk):
         self.event_box.delete("1.0", "end")
         self.event_box.insert("end", text)
         self.event_box.configure(state="disabled")
+
+    def _refresh_face_auth_panel(self):
+        recent = self._events.read_recent(limit=30)
+        auth_events = [e for e in recent if e.get("category") in ("auth_success", "auth_fail")]
+        if not auth_events:
+            return
+
+        latest = auth_events[-1]
+        ts = latest.get("timestamp")
+        if ts == self._last_shown_auth_ts:
+            return  # already showing this one, nothing new
+        self._last_shown_auth_ts = ts
+
+        detail = latest.get("detail", {})
+        method = detail.get("method", "?")
+        if latest["category"] == "auth_success":
+            if method == "face":
+                text = f"✅ Access granted — face match: {detail.get('name')} (distance {detail.get('distance')}) at {ts[11:19]}"
+            else:
+                text = f"✅ Access granted — correct PIN entered at {ts[11:19]}"
+            self.auth_status_label.configure(text=text, text_color=THREAT_COLORS["SAFE"])
+            self.auth_thumbnail_label.configure(image=None, text="(match, no capture needed)")
+        else:
+            if method == "face":
+                reason = detail.get("reason", "unknown")
+                text = f"⚠️ Face not recognized ({reason}) at {ts[11:19]} — try again or enter PIN"
+            else:
+                text = f"⚠️ Incorrect PIN entered at {ts[11:19]}"
+            self.auth_status_label.configure(text=text, text_color=THREAT_COLORS["WARNING"])
+            image_path = latest.get("image_path")
+            if image_path:
+                try:
+                    pil_image = Image.open(image_path)
+                    pil_image.thumbnail((160, 120))
+                    ctk_image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=pil_image.size)
+                    self.auth_thumbnail_label.configure(image=ctk_image, text="")
+                except Exception:
+                    logger.exception("Could not load auth_fail capture: %s", image_path)
