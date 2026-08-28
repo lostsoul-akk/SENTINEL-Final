@@ -4,4 +4,6 @@ __pycache__/
 *.pyc
 data/*.jsonl
 COMMITS.md
+face_model.yml
+haarcascade_frontalface_default.xml
 
