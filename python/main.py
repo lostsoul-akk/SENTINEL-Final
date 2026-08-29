@@ -49,21 +49,14 @@ def on_message(topic: str, payload: dict):
         if "humidity" in payload:
             environmental_controller.evaluate()
     elif topic == TOPIC_ESP32_1_STATUS:
-        previous_keypad = state.keypad
         state.update_from_esp32_1(payload)
         logger.info("esp32_1 status update: %s", payload)
-        # Placeholder convention until Person 1 confirms ESP32 #1's real
-        # keypad message contract: treat any change to a digit-only string
-        # as a completed PIN entry attempt.
-        new_keypad = payload.get("keypad")
-        if (
-            new_keypad
-            and new_keypad != previous_keypad
-            and new_keypad != "idle"
-            and new_keypad.isdigit()
-            and auth_engine is not None
-        ):
-            auth_engine.on_keypad_pin_entered(new_keypad)
+        # Keypad PIN entry contract (see PIN_ENTRY_CONTRACT.md): ESP32 #1
+        # publishes {"type": "keypad_pin", "pin": "..."} once, after Enter
+        # is pressed — this is a discrete submission, not a live-typing
+        # field, so no need to compare against a previous value.
+        if payload.get("type") == "keypad_pin" and auth_engine is not None:
+            auth_engine.on_keypad_pin_entered(payload.get("pin", ""))
     elif topic == TOPIC_EVENT:
         logger.warning("EVENT: %s", payload)
         threat_analyzer.handle_event(payload)
