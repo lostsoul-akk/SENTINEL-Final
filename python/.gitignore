@@ -3,7 +3,11 @@ venv/
 __pycache__/
 *.pyc
 data/*.jsonl
+data/captures/*.jpg
+data/faces/raw_*/
 COMMITS.md
 face_model.yml
+people.txt
 haarcascade_frontalface_default.xml
+
 
