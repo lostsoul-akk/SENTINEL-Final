@@ -671,7 +671,7 @@ void setup() {
   );
 
   // Initial positions
-  doorServo.write(DOOR_UNLOCKED);
+  doorServo.write(DOOR_LOCKED);
   windowServo.write(WINDOW_CLOSED);
 
   connectWiFi();
