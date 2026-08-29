@@ -20,6 +20,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from camera import VideoStream
 from face_engine import FaceEngine
@@ -40,7 +41,7 @@ FAILED_MATCH_LOG_COOLDOWN_SECONDS = 15.0
 
 # Placeholder until Person 1 confirms ESP32 #1's real keypad message
 # contract. For now: correct PIN is configured here directly.
-CORRECT_PIN = "1234"
+CORRECT_PIN = "3234"
 
 
 class AuthEngine:
@@ -49,8 +50,8 @@ class AuthEngine:
         state: SystemState,
         mqtt_client: SentinelMQTTClient,
         event_logger: EventLogger,
-        video_stream: VideoStream,
-        face_engine: FaceEngine,
+        video_stream: Optional[VideoStream],
+        face_engine: Optional[FaceEngine],
     ):
         self._state = state
         self._mqtt = mqtt_client
@@ -68,7 +69,12 @@ class AuthEngine:
 
     def start_surveillance(self):
         """Begin continuous face-recognition surveillance on a background
-        thread. Call once, at app startup."""
+        thread. Call once, at app startup. Safe to call even without a
+        camera/face engine — PIN entry (on_keypad_pin_entered) works
+        either way, since it doesn't depend on this thread at all."""
+        if self._video is None or self._face is None:
+            logger.info("No camera/face engine available — surveillance not started (PIN entry still active)")
+            return
         self._running = True
         self._thread = threading.Thread(target=self._surveillance_loop, daemon=True)
         self._thread.start()

@@ -9,6 +9,7 @@ Run:
 
 import argparse
 import logging
+import threading
 import time
 
 from auth_engine import AuthEngine
@@ -41,6 +42,13 @@ threat_analyzer: ThreatAnalyzer
 environmental_controller: EnvironmentalController
 auth_engine: AuthEngine = None  # may stay None if no camera is available
 
+# How often to publish a full system-status snapshot (sentinelx/system/status)
+# so the dashboard and any other listener see fresh values even between
+# esp32 status updates or triggered events.
+STATUS_PUBLISH_INTERVAL_SECONDS = 5.0
+_status_publish_running = False
+_status_publish_thread: threading.Thread = None
+
 
 def on_message(topic: str, payload: dict):
     if topic == TOPIC_ESP32_2_STATUS:
@@ -69,8 +77,16 @@ def on_connect_change(connected: bool):
     logger.info("Broker connection state: %s", connected)
 
 
+def _status_publish_loop():
+    while _status_publish_running:
+        if mqtt_client.is_connected:
+            mqtt_client.publish_system_status(state.to_status_payload())
+        time.sleep(STATUS_PUBLISH_INTERVAL_SECONDS)
+
+
 def main():
     global mqtt_client, threat_analyzer, environmental_controller, auth_engine
+    global _status_publish_running, _status_publish_thread
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -99,19 +115,30 @@ def main():
     environmental_controller = EnvironmentalController(state, mqtt_client)
 
     video_stream = None
+    face_engine = None
     try:
         source = args.fake_camera_dir if args.fake_camera_dir else args.camera_index
         video_stream = VideoStream(source=source)
         video_stream.start()
         face_engine = FaceEngine()
-        auth_engine = AuthEngine(state, mqtt_client, event_logger, video_stream, face_engine)
-        auth_engine.start_surveillance()
-        logger.info("Continuous surveillance ready (source=%s)", source)
+        logger.info("Camera/face recognition ready (source=%s)", source)
     except Exception:
-        logger.exception("Could not start camera/face recognition — continuing without it")
-        auth_engine = None
+        logger.exception("Could not start camera/face recognition — continuing without it (PIN entry still works)")
+        video_stream = None
+        face_engine = None
+
+    # Always construct AuthEngine, even without a camera: PIN entry doesn't
+    # depend on it, and start_surveillance() no-ops safely when video_stream
+    # or face_engine is None.
+    auth_engine = AuthEngine(state, mqtt_client, event_logger, video_stream, face_engine)
+    auth_engine.start_surveillance()
 
     mqtt_client.connect()
+
+    _status_publish_running = True
+    _status_publish_thread = threading.Thread(target=_status_publish_loop, daemon=True)
+    _status_publish_thread.start()
+    logger.info("Status heartbeat started (interval=%.1fs)", STATUS_PUBLISH_INTERVAL_SECONDS)
 
     try:
         if args.headless:
@@ -119,6 +146,9 @@ def main():
         else:
             _run_dashboard(video_stream)
     finally:
+        _status_publish_running = False
+        if _status_publish_thread:
+            _status_publish_thread.join(timeout=2)
         if auth_engine is not None:
             auth_engine.stop_surveillance()
         if video_stream is not None:
